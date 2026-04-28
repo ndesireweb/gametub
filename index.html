@@ -120,7 +120,7 @@
         <div class="news-grid" id="newsGrid">
             <div class="loading-state"><div class="spinner"></div>Récupération des actus (Reddit + flux RSS)…</div>
         </div>
-        <footer>Sources : Reddit, IGN, GameSpot, Polygon, Kotaku, Eurogamer… · <span id="lastUpdate"></span></footer>
+        <footer>Sources : Reddit, IGN, GameSpot, Polygon, Kotaku… · <span id="lastUpdate"></span></footer>
     </div>
 
     <div class="discussion-section" id="discussionSection">
@@ -138,7 +138,7 @@
 <script>
 (function() {
     // ===== CONFIG =====
-    const BASE_PATH = '/gametub'; // Change si tu héberges à la racine "/"
+    const BASE_PATH = '/gametub';
     
     // Reddit (CORS OK)
     const REDDIT_SOURCES = [
@@ -151,7 +151,7 @@
         { id:'general', sub:'Games', icon:'🎮' }
     ];
 
-    // Flux RSS (passent par proxy CORS)
+    // Flux RSS (passent par feed2json, gratuit et fiable)
     const RSS_SOURCES = [
         { name:'IGN', url:'https://feeds.feedburner.com/ign/all', icon:'🔥' },
         { name:'GameSpot', url:'https://www.gamespot.com/feeds/mashup/', icon:'🎯' },
@@ -164,12 +164,8 @@
         { name:'Pure Xbox', url:'https://www.purexbox.com/feeds/latest', icon:'❎' }
     ];
 
-    // Proxys CORS publics (priorité)
-    const CORS_PROXIES = [
-        'https://api.allorigins.win/raw?url=',
-        'https://corsproxy.io/?',
-        'https://api.codetabs.com/v1/proxy?quest='
-    ];
+    // Service de conversion RSS → JSON (CORS friendly, pas de clé)
+    const FEED2JSON_API = 'https://api.feed2json.org/v1/convert?url=';
 
     // ===== ÉTAT =====
     let allArticles = [];
@@ -211,62 +207,30 @@
         });
     }
 
-    // ===== RSS VIA PROXY (avec fallback) =====
+    // ===== RSS VIA FEED2JSON =====
     async function fetchRSS(source) {
-        const url = source.url;
-        // Essaie chaque proxy jusqu'à ce que ça passe
-        for (const proxy of CORS_PROXIES) {
-            try {
-                const proxyUrl = proxy + encodeURIComponent(url);
-                const res = await fetch(proxyUrl);
-                if (!res.ok) continue;
-                const xmlText = await res.text();
-                const articles = parseRSS(xmlText, source);
-                if (articles.length > 0) return articles;
-            } catch (e) {
-                continue;
-            }
-        }
-        return []; // tous les proxys ont échoué
-    }
-
-    function parseRSS(xmlText, source) {
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
-        const items = xmlDoc.querySelectorAll('item');
-        const articles = [];
-        items.forEach(item => {
-            const title = item.querySelector('title')?.textContent?.trim();
-            const link = item.querySelector('link')?.textContent?.trim();
-            const pubDate = item.querySelector('pubDate')?.textContent;
-            if (!title || !link) return;
-            let thumbnail = null;
-            // media:content ou enclosure
-            const media = item.getElementsByTagNameNS('http://search.yahoo.com/mrss/', 'content')[0];
-            if (media && media.getAttribute('url')) thumbnail = media.getAttribute('url');
-            else {
-                const enclosure = item.querySelector('enclosure');
-                if (enclosure && enclosure.getAttribute('url')) thumbnail = enclosure.getAttribute('url');
-            }
-            articles.push({
-                title: decodeHTML(title),
-                url: link,
+        try {
+            const apiUrl = FEED2JSON_API + encodeURIComponent(source.url);
+            const res = await fetch(apiUrl);
+            if (!res.ok) return [];
+            const data = await res.json();
+            if (!data.items || !Array.isArray(data.items)) return [];
+            
+            return data.items.map(item => ({
+                title: item.title || '',
+                url: item.url || '',
                 score: 0,
                 comments: 0,
-                thumbnail,
+                thumbnail: item.image || item.banner_image || null,
                 sourceName: source.name,
                 sourceIcon: source.icon,
-                categoryId: guessCategory(title, source.name),
-                date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString()
-            });
-        });
-        return articles;
-    }
-
-    function decodeHTML(html) {
-        const txt = document.createElement('textarea');
-        txt.innerHTML = html;
-        return txt.value;
+                categoryId: guessCategory(item.title || '', source.name),
+                date: item.date_published || new Date().toISOString()
+            }));
+        } catch (e) {
+            console.warn(`Erreur flux RSS ${source.name} :`, e.message);
+            return [];
+        }
     }
 
     function guessCategory(title, sourceName) {
@@ -297,7 +261,6 @@
     async function loadAllNews() {
         newsGrid.innerHTML = '<div class="loading-state"><div class="spinner"></div>Connexion à Reddit + flux RSS…</div>';
         try {
-            // Reddit en parallèle
             const uniqueSubs = [...new Set(REDDIT_SOURCES.map(s => s.sub))];
             const redditPromises = uniqueSubs.map(sub => fetchReddit(sub).catch(() => []));
             const rssPromises = RSS_SOURCES.map(src => fetchRSS(src));
@@ -309,7 +272,6 @@
 
             const combined = [...redditResults.flat(), ...rssResults.flat()];
             allArticles = deduplicate(combined);
-            // Tri par date décroissante puis score
             allArticles.sort((a, b) => {
                 const da = new Date(a.date).getTime() || 0;
                 const db = new Date(b.date).getTime() || 0;
@@ -331,7 +293,7 @@
             return;
         }
         newsGrid.innerHTML = filtered.map(art => {
-            const thumbHtml = (art.thumbnail) 
+            const thumbHtml = art.thumbnail 
                 ? `<img src="${art.thumbnail}" alt="" onerror="this.style.display='none';this.parentElement.textContent='${art.sourceIcon||'📰'}';" loading="lazy">`
                 : (art.sourceIcon || '📰');
             const scoreF = art.score > 1000 ? (art.score/1000).toFixed(1)+'k' : art.score;
@@ -368,9 +330,7 @@
     });
 
     // ===== DISCUSSION (localStorage) =====
-    function getMessages() {
-        try { return JSON.parse(localStorage.getItem('gametub_chat') || '[]'); } catch { return []; }
-    }
+    function getMessages() { try { return JSON.parse(localStorage.getItem('gametub_chat') || '[]'); } catch { return []; } }
     function saveMessages(msgs) { localStorage.setItem('gametub_chat', JSON.stringify(msgs)); }
     function renderChat() {
         const msgs = getMessages();
@@ -398,7 +358,7 @@
     sendBtn.addEventListener('click', sendMessage);
     messageInput.addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
 
-    // ===== ROUTEUR (gère les URLs propres) =====
+    // ===== ROUTEUR =====
     function route(path) {
         currentRoute = path;
         navLinks.forEach(link => {
@@ -425,10 +385,9 @@
     });
     window.addEventListener('popstate', () => route(location.pathname));
 
-    // ===== INITIALISATION =====
+    // ===== INIT =====
     (function init() {
         const path = location.pathname;
-        // Gère la redirection depuis 404.html pour les URLs propres
         if (sessionStorage.redirect) {
             const redirected = sessionStorage.redirect;
             delete sessionStorage.redirect;
@@ -440,7 +399,6 @@
         }
     })();
 
-    // Rechargement auto toutes les 15 min
     setInterval(() => {
         if (currentRoute === BASE_PATH + '/' || currentRoute === BASE_PATH + '/index.html') loadAllNews();
     }, 15 * 60 * 1000);
