@@ -115,7 +115,7 @@
             <button class="tab-btn" data-filter="XboxSeriesX">🟢 Xbox</button>
             <button class="tab-btn" data-filter="NintendoSwitch">🔴 Nintendo</button>
             <button class="tab-btn" data-filter="PC">💻 PC</button>
-            <button class="tab-btn" data-filter="general">🎲 Général</button>
+            <button class="tab-btn" data-filter="gaming">🎲 Gaming</button>
         </div>
         <div class="news-grid" id="newsGrid">
             <div class="loading-state"><div class="spinner"></div>Récupération des actus (Reddit + flux RSS)…</div>
@@ -140,18 +140,18 @@
     // ===== CONFIG =====
     const BASE_PATH = '/gametub';
     
-    // Reddit (CORS OK)
+    // Reddit : on a maintenant une catégorie "gaming" pour r/gaming et r/Games
     const REDDIT_SOURCES = [
         { id:'PS5', sub:'PS5', icon:'🎮' },
         { id:'XboxSeriesX', sub:'XboxSeriesX', icon:'🟢' },
         { id:'NintendoSwitch', sub:'NintendoSwitch', icon:'🔴' },
         { id:'PC', sub:'pcmasterrace', icon:'💻' },
         { id:'PC', sub:'pcgaming', icon:'🖥️' },
-        { id:'general', sub:'gaming', icon:'🎲' },
-        { id:'general', sub:'Games', icon:'🎮' }
+        { id:'gaming', sub:'gaming', icon:'🎲' },
+        { id:'gaming', sub:'Games', icon:'🎮' }
     ];
 
-    // Flux RSS (passent par feed2json, gratuit et fiable)
+    // Flux RSS
     const RSS_SOURCES = [
         { name:'IGN', url:'https://feeds.feedburner.com/ign/all', icon:'🔥' },
         { name:'GameSpot', url:'https://www.gamespot.com/feeds/mashup/', icon:'🎯' },
@@ -164,7 +164,6 @@
         { name:'Pure Xbox', url:'https://www.purexbox.com/feeds/latest', icon:'❎' }
     ];
 
-    // Service de conversion RSS → JSON (CORS friendly, pas de clé)
     const FEED2JSON_API = 'https://api.feed2json.org/v1/convert?url=';
 
     // ===== ÉTAT =====
@@ -201,7 +200,7 @@
                 thumbnail: (p.thumbnail && p.thumbnail.startsWith('http')) ? p.thumbnail : null,
                 sourceName: `r/${sub}`,
                 sourceIcon: src ? src.icon : '📌',
-                categoryId: src ? src.id : 'general',
+                categoryId: src ? src.id : 'gaming', // par défaut gaming si non trouvée
                 date: new Date(p.created_utc * 1000).toISOString()
             };
         });
@@ -239,7 +238,11 @@
         if (/xbox|series x|game pass/i.test(t)) return 'XboxSeriesX';
         if (/nintendo|switch|mario|zelda|pokémon/i.test(t)) return 'NintendoSwitch';
         if (/pc|steam|epic games/i.test(t)) return 'PC';
-        return 'general';
+        // Si c'est une source généraliste gaming, on met dans "gaming"
+        if (/ign|gamespot|polygon|kotaku|eurogamer|pc gamer|nintendo life|push square|pure xbox/i.test(sourceName)) {
+            return 'gaming';
+        }
+        return 'gaming'; // fallback
     }
 
     // ===== DÉDOUBLONNAGE =====
