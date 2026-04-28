@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Redirection</title>
+    <script>
+        // Enregistre le chemin demandé et redirige vers la racine
+        sessionStorage.redirect = location.pathname;
+        location.replace('/');
+    </script>
+</head>
+<body>
+    <!-- Redirection en cours… -->
+</body>
+</html>
