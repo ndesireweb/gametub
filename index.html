@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GAMETUB – Actus PC, Consoles, Jeux</title>
+    <title>GAMETUB – Actus Jeux & Monde</title>
     <style>
         :root {
             --bg: #0a0a10;
@@ -116,11 +116,12 @@
             <button class="tab-btn" data-filter="NintendoSwitch">🔴 Nintendo</button>
             <button class="tab-btn" data-filter="PC">💻 PC</button>
             <button class="tab-btn" data-filter="gaming">🎲 Gaming</button>
+            <button class="tab-btn" data-filter="world">🗺️ Monde</button>
         </div>
         <div class="news-grid" id="newsGrid">
             <div class="loading-state"><div class="spinner"></div>Récupération des actus (Reddit + flux RSS)…</div>
         </div>
-        <footer>Sources : Reddit, IGN, GameSpot, Polygon, Kotaku… · <span id="lastUpdate"></span></footer>
+        <footer>Sources : Reddit, IGN, GameSpot, BBC, Reuters, Le Monde… · <span id="lastUpdate"></span></footer>
     </div>
 
     <div class="discussion-section" id="discussionSection">
@@ -140,28 +141,41 @@
     // ===== CONFIG =====
     const BASE_PATH = '/gametub';
     
-    // Reddit : on a maintenant une catégorie "gaming" pour r/gaming et r/Games
+    // Reddit : catégories gaming + monde
     const REDDIT_SOURCES = [
+        // Plateformes
         { id:'PS5', sub:'PS5', icon:'🎮' },
         { id:'XboxSeriesX', sub:'XboxSeriesX', icon:'🟢' },
         { id:'NintendoSwitch', sub:'NintendoSwitch', icon:'🔴' },
         { id:'PC', sub:'pcmasterrace', icon:'💻' },
         { id:'PC', sub:'pcgaming', icon:'🖥️' },
+        // Gaming général
         { id:'gaming', sub:'gaming', icon:'🎲' },
-        { id:'gaming', sub:'Games', icon:'🎮' }
+        { id:'gaming', sub:'Games', icon:'🎮' },
+        // Monde (news réelles)
+        { id:'world', sub:'worldnews', icon:'🌍' },
+        { id:'world', sub:'news', icon:'📰' },
+        { id:'world', sub:'politics', icon:'🗳️' },
+        { id:'world', sub:'geopolitics', icon:'🌐' }
     ];
 
-    // Flux RSS
+    // Flux RSS : gaming + news générales
     const RSS_SOURCES = [
-        { name:'IGN', url:'https://feeds.feedburner.com/ign/all', icon:'🔥' },
-        { name:'GameSpot', url:'https://www.gamespot.com/feeds/mashup/', icon:'🎯' },
-        { name:'Polygon', url:'https://www.polygon.com/rss/index.xml', icon:'🔷' },
-        { name:'Kotaku', url:'https://kotaku.com/rss', icon:'🟣' },
-        { name:'Eurogamer', url:'https://www.eurogamer.net/?format=rss', icon:'🌍' },
-        { name:'PC Gamer', url:'https://www.pcgamer.com/rss/', icon:'🖥️' },
-        { name:'Nintendo Life', url:'https://www.nintendolife.com/feeds/latest', icon:'🍄' },
-        { name:'Push Square', url:'https://www.pushsquare.com/feeds/latest', icon:'▫️' },
-        { name:'Pure Xbox', url:'https://www.purexbox.com/feeds/latest', icon:'❎' }
+        // Gaming
+        { name:'IGN', url:'https://feeds.feedburner.com/ign/all', icon:'🔥', type:'gaming' },
+        { name:'GameSpot', url:'https://www.gamespot.com/feeds/mashup/', icon:'🎯', type:'gaming' },
+        { name:'Polygon', url:'https://www.polygon.com/rss/index.xml', icon:'🔷', type:'gaming' },
+        { name:'Kotaku', url:'https://kotaku.com/rss', icon:'🟣', type:'gaming' },
+        { name:'Eurogamer', url:'https://www.eurogamer.net/?format=rss', icon:'🌍', type:'gaming' },
+        { name:'PC Gamer', url:'https://www.pcgamer.com/rss/', icon:'🖥️', type:'gaming' },
+        { name:'Nintendo Life', url:'https://www.nintendolife.com/feeds/latest', icon:'🍄', type:'gaming' },
+        { name:'Push Square', url:'https://www.pushsquare.com/feeds/latest', icon:'▫️', type:'gaming' },
+        { name:'Pure Xbox', url:'https://www.purexbox.com/feeds/latest', icon:'❎', type:'gaming' },
+        // Monde (actualités réelles internationales)
+        { name:'BBC News', url:'http://feeds.bbci.co.uk/news/world/rss.xml', icon:'🇬🇧', type:'world' },
+        { name:'Reuters', url:'https://www.reutersagency.com/feed/', icon:'📊', type:'world' },
+        { name:'Le Monde', url:'https://www.lemonde.fr/international/rss_full.xml', icon:'🇫🇷', type:'world' },
+        { name:'Al Jazeera', url:'https://www.aljazeera.com/xml/rss/all.xml', icon:'🌐', type:'world' }
     ];
 
     const FEED2JSON_API = 'https://api.feed2json.org/v1/convert?url=';
@@ -184,7 +198,7 @@
     const sendBtn = document.getElementById('sendBtn');
 
     // ===== REDDIT DIRECT =====
-    async function fetchReddit(sub) {
+    async function fetchReddit(sub, categoryId) {
         const url = `https://www.reddit.com/r/${sub}/hot.json?limit=20&raw_json=1`;
         const res = await fetch(url, { headers: { 'User-Agent': 'GameTub/1.0' } });
         if (!res.ok) return [];
@@ -200,14 +214,14 @@
                 thumbnail: (p.thumbnail && p.thumbnail.startsWith('http')) ? p.thumbnail : null,
                 sourceName: `r/${sub}`,
                 sourceIcon: src ? src.icon : '📌',
-                categoryId: src ? src.id : 'gaming', // par défaut gaming si non trouvée
+                categoryId: categoryId || 'gaming',
                 date: new Date(p.created_utc * 1000).toISOString()
             };
         });
     }
 
     // ===== RSS VIA FEED2JSON =====
-    async function fetchRSS(source) {
+    async function fetchRSS(source, categoryType) {
         try {
             const apiUrl = FEED2JSON_API + encodeURIComponent(source.url);
             const res = await fetch(apiUrl);
@@ -223,7 +237,7 @@
                 thumbnail: item.image || item.banner_image || null,
                 sourceName: source.name,
                 sourceIcon: source.icon,
-                categoryId: guessCategory(item.title || '', source.name),
+                categoryId: ((categoryType === 'world') ? 'world' : guessGamingCategory(item.title || '', source.name)),
                 date: item.date_published || new Date().toISOString()
             }));
         } catch (e) {
@@ -232,17 +246,13 @@
         }
     }
 
-    function guessCategory(title, sourceName) {
+    function guessGamingCategory(title, sourceName) {
         const t = title.toLowerCase();
         if (/ps5|playstation|dualsense|ps plus/i.test(t)) return 'PS5';
         if (/xbox|series x|game pass/i.test(t)) return 'XboxSeriesX';
         if (/nintendo|switch|mario|zelda|pokémon/i.test(t)) return 'NintendoSwitch';
         if (/pc|steam|epic games/i.test(t)) return 'PC';
-        // Si c'est une source généraliste gaming, on met dans "gaming"
-        if (/ign|gamespot|polygon|kotaku|eurogamer|pc gamer|nintendo life|push square|pure xbox/i.test(sourceName)) {
-            return 'gaming';
-        }
-        return 'gaming'; // fallback
+        return 'gaming';
     }
 
     // ===== DÉDOUBLONNAGE =====
@@ -264,9 +274,10 @@
     async function loadAllNews() {
         newsGrid.innerHTML = '<div class="loading-state"><div class="spinner"></div>Connexion à Reddit + flux RSS…</div>';
         try {
-            const uniqueSubs = [...new Set(REDDIT_SOURCES.map(s => s.sub))];
-            const redditPromises = uniqueSubs.map(sub => fetchReddit(sub).catch(() => []));
-            const rssPromises = RSS_SOURCES.map(src => fetchRSS(src));
+            // Reddit : chaque sub avec sa catégorie
+            const redditPromises = REDDIT_SOURCES.map(({ sub, id }) => fetchReddit(sub, id).catch(() => []));
+            // RSS : on conserve leur type (world ou gaming)
+            const rssPromises = RSS_SOURCES.map(({ url, name, icon, type }) => fetchRSS({ url, name, icon }, type));
 
             const [redditResults, rssResults] = await Promise.all([
                 Promise.all(redditPromises),
