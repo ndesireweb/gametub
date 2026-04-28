@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🌍 GameNews - Actus PC, Consoles, Jeux</title>
+    <title>GAMETUB – Actus PC, Consoles, Jeux</title>
     <style>
         :root {
             --bg: #0a0a10;
@@ -40,9 +40,7 @@
         }
         .tab-btn:hover { border-color: var(--accent); color: white; }
         .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #000; }
-        .news-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem;
-        }
+        .news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
         .news-card {
             background: var(--card-bg); border: 1px solid var(--border); border-radius: 1rem;
             padding: 1rem; display: flex; gap: 1rem; transition: 0.2s; cursor: pointer;
@@ -105,8 +103,8 @@
 </head>
 <body>
 <nav>
-    <a href="/" data-route="/" class="active">📡 Actualités</a>
-    <a href="/discussion" data-route="/discussion">💬 Discussion</a>
+    <a href="/gametub/" data-route="/gametub/" class="active">📡 Actualités</a>
+    <a href="/gametub/discussion" data-route="/gametub/discussion">💬 Discussion</a>
 </nav>
 
 <div class="container" id="appContainer">
@@ -120,9 +118,9 @@
             <button class="tab-btn" data-filter="general">🎲 Général</button>
         </div>
         <div class="news-grid" id="newsGrid">
-            <div class="loading-state"><div class="spinner"></div>Chargement des actus multi-sources…</div>
+            <div class="loading-state"><div class="spinner"></div>Récupération des actus (Reddit + flux RSS)…</div>
         </div>
-        <footer>Sources : Reddit, IGN, GameSpot, Polygon, Kotaku, Eurogamer, PC Gamer, Nintendo Life… · <span id="lastUpdate"></span></footer>
+        <footer>Sources : Reddit, IGN, GameSpot, Polygon, Kotaku, Eurogamer… · <span id="lastUpdate"></span></footer>
     </div>
 
     <div class="discussion-section" id="discussionSection">
@@ -139,15 +137,46 @@
 
 <script>
 (function() {
-    // ⚠️ REMPLACE cette URL par celle de ton API Vercel (ex: https://mon-api.vercel.app)
-    const API_BASE = 'https://TON-API-VERCEL.vercel.app';
+    // ===== CONFIG =====
+    const BASE_PATH = '/gametub'; // Change si tu héberges à la racine "/"
+    
+    // Reddit (CORS OK)
+    const REDDIT_SOURCES = [
+        { id:'PS5', sub:'PS5', icon:'🎮' },
+        { id:'XboxSeriesX', sub:'XboxSeriesX', icon:'🟢' },
+        { id:'NintendoSwitch', sub:'NintendoSwitch', icon:'🔴' },
+        { id:'PC', sub:'pcmasterrace', icon:'💻' },
+        { id:'PC', sub:'pcgaming', icon:'🖥️' },
+        { id:'general', sub:'gaming', icon:'🎲' },
+        { id:'general', sub:'Games', icon:'🎮' }
+    ];
 
-    // --- État
+    // Flux RSS (passent par proxy CORS)
+    const RSS_SOURCES = [
+        { name:'IGN', url:'https://feeds.feedburner.com/ign/all', icon:'🔥' },
+        { name:'GameSpot', url:'https://www.gamespot.com/feeds/mashup/', icon:'🎯' },
+        { name:'Polygon', url:'https://www.polygon.com/rss/index.xml', icon:'🔷' },
+        { name:'Kotaku', url:'https://kotaku.com/rss', icon:'🟣' },
+        { name:'Eurogamer', url:'https://www.eurogamer.net/?format=rss', icon:'🌍' },
+        { name:'PC Gamer', url:'https://www.pcgamer.com/rss/', icon:'🖥️' },
+        { name:'Nintendo Life', url:'https://www.nintendolife.com/feeds/latest', icon:'🍄' },
+        { name:'Push Square', url:'https://www.pushsquare.com/feeds/latest', icon:'▫️' },
+        { name:'Pure Xbox', url:'https://www.purexbox.com/feeds/latest', icon:'❎' }
+    ];
+
+    // Proxys CORS publics (priorité)
+    const CORS_PROXIES = [
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?',
+        'https://api.codetabs.com/v1/proxy?quest='
+    ];
+
+    // ===== ÉTAT =====
     let allArticles = [];
     let activeFilter = 'all';
-    let currentRoute = '/';
+    let currentRoute = BASE_PATH + '/';
 
-    // --- DOM
+    // ===== DOM =====
     const newsGrid = document.getElementById('newsGrid');
     const lastUpdateSpan = document.getElementById('lastUpdate');
     const tabBtns = document.querySelectorAll('.tab-btn');
@@ -159,32 +188,152 @@
     const messageInput = document.getElementById('messageInput');
     const sendBtn = document.getElementById('sendBtn');
 
-    // --- Appel à l'API unique
+    // ===== REDDIT DIRECT =====
+    async function fetchReddit(sub) {
+        const url = `https://www.reddit.com/r/${sub}/hot.json?limit=20&raw_json=1`;
+        const res = await fetch(url, { headers: { 'User-Agent': 'GameTub/1.0' } });
+        if (!res.ok) return [];
+        const json = await res.json();
+        return json.data.children.map(c => {
+            const p = c.data;
+            const src = REDDIT_SOURCES.find(s => s.sub === sub);
+            return {
+                title: p.title,
+                url: `https://www.reddit.com${p.permalink}`,
+                score: p.score,
+                comments: p.num_comments,
+                thumbnail: (p.thumbnail && p.thumbnail.startsWith('http')) ? p.thumbnail : null,
+                sourceName: `r/${sub}`,
+                sourceIcon: src ? src.icon : '📌',
+                categoryId: src ? src.id : 'general',
+                date: new Date(p.created_utc * 1000).toISOString()
+            };
+        });
+    }
+
+    // ===== RSS VIA PROXY (avec fallback) =====
+    async function fetchRSS(source) {
+        const url = source.url;
+        // Essaie chaque proxy jusqu'à ce que ça passe
+        for (const proxy of CORS_PROXIES) {
+            try {
+                const proxyUrl = proxy + encodeURIComponent(url);
+                const res = await fetch(proxyUrl);
+                if (!res.ok) continue;
+                const xmlText = await res.text();
+                const articles = parseRSS(xmlText, source);
+                if (articles.length > 0) return articles;
+            } catch (e) {
+                continue;
+            }
+        }
+        return []; // tous les proxys ont échoué
+    }
+
+    function parseRSS(xmlText, source) {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
+        const items = xmlDoc.querySelectorAll('item');
+        const articles = [];
+        items.forEach(item => {
+            const title = item.querySelector('title')?.textContent?.trim();
+            const link = item.querySelector('link')?.textContent?.trim();
+            const pubDate = item.querySelector('pubDate')?.textContent;
+            if (!title || !link) return;
+            let thumbnail = null;
+            // media:content ou enclosure
+            const media = item.getElementsByTagNameNS('http://search.yahoo.com/mrss/', 'content')[0];
+            if (media && media.getAttribute('url')) thumbnail = media.getAttribute('url');
+            else {
+                const enclosure = item.querySelector('enclosure');
+                if (enclosure && enclosure.getAttribute('url')) thumbnail = enclosure.getAttribute('url');
+            }
+            articles.push({
+                title: decodeHTML(title),
+                url: link,
+                score: 0,
+                comments: 0,
+                thumbnail,
+                sourceName: source.name,
+                sourceIcon: source.icon,
+                categoryId: guessCategory(title, source.name),
+                date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString()
+            });
+        });
+        return articles;
+    }
+
+    function decodeHTML(html) {
+        const txt = document.createElement('textarea');
+        txt.innerHTML = html;
+        return txt.value;
+    }
+
+    function guessCategory(title, sourceName) {
+        const t = title.toLowerCase();
+        if (/ps5|playstation|dualsense|ps plus/i.test(t)) return 'PS5';
+        if (/xbox|series x|game pass/i.test(t)) return 'XboxSeriesX';
+        if (/nintendo|switch|mario|zelda|pokémon/i.test(t)) return 'NintendoSwitch';
+        if (/pc|steam|epic games/i.test(t)) return 'PC';
+        return 'general';
+    }
+
+    // ===== DÉDOUBLONNAGE =====
+    function normalizeTitle(str) {
+        return str.toLowerCase().replace(/[^a-z0-9à-ü]/g, '').trim().substring(0, 60);
+    }
+
+    function deduplicate(articles) {
+        const seen = new Set();
+        return articles.filter(a => {
+            const norm = normalizeTitle(a.title);
+            if (seen.has(norm)) return false;
+            seen.add(norm);
+            return true;
+        });
+    }
+
+    // ===== CHARGEMENT PRINCIPAL =====
     async function loadAllNews() {
-        newsGrid.innerHTML = '<div class="loading-state"><div class="spinner"></div>Connexion à l’agrégateur…</div>';
+        newsGrid.innerHTML = '<div class="loading-state"><div class="spinner"></div>Connexion à Reddit + flux RSS…</div>';
         try {
-            const res = await fetch(`${API_BASE}/api/aggregate-news`);
-            if (!res.ok) throw new Error('Erreur API ' + res.status);
-            const data = await res.json();
-            allArticles = data.articles || [];
+            // Reddit en parallèle
+            const uniqueSubs = [...new Set(REDDIT_SOURCES.map(s => s.sub))];
+            const redditPromises = uniqueSubs.map(sub => fetchReddit(sub).catch(() => []));
+            const rssPromises = RSS_SOURCES.map(src => fetchRSS(src));
+
+            const [redditResults, rssResults] = await Promise.all([
+                Promise.all(redditPromises),
+                Promise.all(rssPromises)
+            ]);
+
+            const combined = [...redditResults.flat(), ...rssResults.flat()];
+            allArticles = deduplicate(combined);
+            // Tri par date décroissante puis score
+            allArticles.sort((a, b) => {
+                const da = new Date(a.date).getTime() || 0;
+                const db = new Date(b.date).getTime() || 0;
+                if (db !== da) return db - da;
+                return (b.score || 0) - (a.score || 0);
+            });
             lastUpdateSpan.textContent = new Date().toLocaleTimeString('fr-FR');
             applyFilter(activeFilter);
         } catch (err) {
-            newsGrid.innerHTML = `<div class="loading-state" style="color:#ff6b6b">⚠️ ${err.message}</div>`;
+            newsGrid.innerHTML = `<div class="loading-state" style="color:#ff6b6b">⚠️ Erreur : ${err.message}</div>`;
         }
     }
 
-    // --- Affichage & filtres
+    // ===== AFFICHAGE =====
     function applyFilter(filter) {
         let filtered = filter === 'all' ? allArticles : allArticles.filter(a => a.categoryId === filter);
         if (filtered.length === 0) {
-            newsGrid.innerHTML = '<div class="loading-state">Aucune actualité dans cette catégorie.</div>';
+            newsGrid.innerHTML = '<div class="loading-state">Aucune actualité trouvée.</div>';
             return;
         }
         newsGrid.innerHTML = filtered.map(art => {
-            const thumbHtml = (art.thumbnail && art.thumbnail.startsWith('http')) ?
-                `<img src="${art.thumbnail}" alt="" onerror="this.style.display='none';this.parentElement.innerHTML='${art.sourceIcon||'📰'}';" loading="lazy">` :
-                (art.sourceIcon || '📰');
+            const thumbHtml = (art.thumbnail) 
+                ? `<img src="${art.thumbnail}" alt="" onerror="this.style.display='none';this.parentElement.textContent='${art.sourceIcon||'📰'}';" loading="lazy">`
+                : (art.sourceIcon || '📰');
             const scoreF = art.score > 1000 ? (art.score/1000).toFixed(1)+'k' : art.score;
             const commentsF = art.comments > 1000 ? (art.comments/1000).toFixed(1)+'k' : art.comments;
             return `
@@ -208,7 +357,7 @@
         return div.innerHTML;
     }
 
-    // --- Gestion des onglets
+    // ===== ONGLETS =====
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             tabBtns.forEach(b => b.classList.remove('active'));
@@ -218,9 +367,11 @@
         });
     });
 
-    // --- Chat local
-    function getMessages() { try { return JSON.parse(localStorage.getItem('gamehub_chat') || '[]'); } catch { return []; } }
-    function saveMessages(msgs) { localStorage.setItem('gamehub_chat', JSON.stringify(msgs)); }
+    // ===== DISCUSSION (localStorage) =====
+    function getMessages() {
+        try { return JSON.parse(localStorage.getItem('gametub_chat') || '[]'); } catch { return []; }
+    }
+    function saveMessages(msgs) { localStorage.setItem('gametub_chat', JSON.stringify(msgs)); }
     function renderChat() {
         const msgs = getMessages();
         chatMessages.innerHTML = msgs.map(m => {
@@ -247,11 +398,13 @@
     sendBtn.addEventListener('click', sendMessage);
     messageInput.addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
 
-    // --- Routeur
+    // ===== ROUTEUR (gère les URLs propres) =====
     function route(path) {
         currentRoute = path;
-        navLinks.forEach(link => link.classList.toggle('active', link.dataset.route === path));
-        if (path === '/discussion') {
+        navLinks.forEach(link => {
+            link.classList.toggle('active', link.dataset.route === path);
+        });
+        if (path === BASE_PATH + '/discussion') {
             newsSection.style.display = 'none';
             discussionSection.classList.add('active');
             renderChat();
@@ -272,10 +425,10 @@
     });
     window.addEventListener('popstate', () => route(location.pathname));
 
-    // Init
+    // ===== INITIALISATION =====
     (function init() {
         const path = location.pathname;
-        // Redirection depuis 404.html (GitHub Pages)
+        // Gère la redirection depuis 404.html pour les URLs propres
         if (sessionStorage.redirect) {
             const redirected = sessionStorage.redirect;
             delete sessionStorage.redirect;
@@ -283,13 +436,13 @@
             route(redirected);
         } else {
             route(path);
-            if (path === '/' || path === '/index.html') loadAllNews();
+            if (path === BASE_PATH + '/' || path === BASE_PATH + '/index.html') loadAllNews();
         }
     })();
 
-    // Rechargement toutes les 15 min
+    // Rechargement auto toutes les 15 min
     setInterval(() => {
-        if (currentRoute === '/' || currentRoute === '/index.html') loadAllNews();
+        if (currentRoute === BASE_PATH + '/' || currentRoute === BASE_PATH + '/index.html') loadAllNews();
     }, 15 * 60 * 1000);
 })();
 </script>
