@@ -110,7 +110,6 @@
 </nav>
 
 <div class="container" id="appContainer">
-    <!-- Section Actualités -->
     <div id="newsSection">
         <div class="tabs" id="tabContainer">
             <button class="tab-btn active" data-filter="all">🌍 Tout</button>
@@ -123,10 +122,9 @@
         <div class="news-grid" id="newsGrid">
             <div class="loading-state"><div class="spinner"></div>Chargement des actus multi-sources…</div>
         </div>
-        <footer>Sources : Reddit, IGN, GameSpot, Polygon, Kotaku, Eurogamer · <span id="lastUpdate"></span></footer>
+        <footer>Sources : Reddit, IGN, GameSpot, Polygon, Kotaku, Eurogamer, PC Gamer, Nintendo Life… · <span id="lastUpdate"></span></footer>
     </div>
 
-    <!-- Section Discussion (cachée par défaut) -->
     <div class="discussion-section" id="discussionSection">
         <h2 style="margin-bottom:1rem;">🗨️ Discussion générale</h2>
         <div class="chat-messages" id="chatMessages"></div>
@@ -141,35 +139,15 @@
 
 <script>
 (function() {
-    // ==================== CONFIGURATION ====================
-    // Multi‑sources : Reddit + flux RSS de grands sites gaming
-    const REDDIT_SOURCES = [
-        { id:'PS5', sub:'PS5', icon:'🎮' },
-        { id:'XboxSeriesX', sub:'XboxSeriesX', icon:'🟢' },
-        { id:'NintendoSwitch', sub:'NintendoSwitch', icon:'🔴' },
-        { id:'PC', sub:'pcmasterrace', icon:'💻' },
-        { id:'PC', sub:'pcgaming', icon:'🖥️' },
-        { id:'general', sub:'gaming', icon:'🎲' },
-        { id:'general', sub:'Games', icon:'🎮' }
-    ];
+    // ⚠️ REMPLACE cette URL par celle de ton API Vercel (ex: https://mon-api.vercel.app)
+    const API_BASE = 'https://TON-API-VERCEL.vercel.app';
 
-    const RSS_SOURCES = [
-        { name:'IGN', url:'https://feeds.feedburner.com/ign/all', icon:'🔥' },
-        { name:'GameSpot', url:'https://www.gamespot.com/feeds/mashup/', icon:'🎯' },
-        { name:'Polygon', url:'https://www.polygon.com/rss/index.xml', icon:'🔷' },
-        { name:'Kotaku', url:'https://kotaku.com/rss', icon:'🟣' },
-        { name:'Eurogamer', url:'https://www.eurogamer.net/?format=rss', icon:'🌍' }
-    ];
-
-    // Proxy CORS public (peut être changé si nécessaire)
-    const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
-
-    // ==================== ÉTAT GLOBAL ====================
+    // --- État
     let allArticles = [];
     let activeFilter = 'all';
     let currentRoute = '/';
 
-    // ==================== DOM ====================
+    // --- DOM
     const newsGrid = document.getElementById('newsGrid');
     const lastUpdateSpan = document.getElementById('lastUpdate');
     const tabBtns = document.querySelectorAll('.tab-btn');
@@ -181,123 +159,22 @@
     const messageInput = document.getElementById('messageInput');
     const sendBtn = document.getElementById('sendBtn');
 
-    // ==================== FONCTIONS FETCH ====================
-    async function fetchReddit(subreddit) {
-        const url = `https://www.reddit.com/r/${subreddit}/hot.json?limit=25&raw_json=1`;
-        const res = await fetch(url, { headers: { 'User-Agent': 'GameNewsHub/2.0' } });
-        if (!res.ok) throw new Error(`Reddit ${subreddit} : ${res.status}`);
-        const json = await res.json();
-        return json.data.children.map(c => {
-            const p = c.data;
-            return {
-                title: p.title,
-                url: `https://www.reddit.com${p.permalink}`,
-                score: p.score,
-                comments: p.num_comments,
-                thumbnail: p.thumbnail,
-                sourceName: `r/${subreddit}`,
-                sourceIcon: REDDIT_SOURCES.find(s => s.sub === subreddit)?.icon || '📌',
-                categoryId: REDDIT_SOURCES.find(s => s.sub === subreddit)?.id || 'general',
-                date: new Date(p.created_utc * 1000).toISOString(),
-                rawTitle: p.title
-            };
-        });
-    }
-
-    async function fetchRSS(source) {
-        try {
-            const proxyUrl = CORS_PROXY + encodeURIComponent(source.url);
-            const response = await fetch(proxyUrl);
-            if (!response.ok) throw new Error(`Proxy fetch failed: ${response.status}`);
-            const xmlText = await response.text();
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
-            const items = xmlDoc.querySelectorAll('item');
-            const articles = [];
-            items.forEach(item => {
-                const title = item.querySelector('title')?.textContent?.trim();
-                const link = item.querySelector('link')?.textContent?.trim();
-                const pubDate = item.querySelector('pubDate')?.textContent;
-                if (!title || !link) return;
-                // extraire une éventuelle image (media:content ou enclosure)
-                let thumbnail = null;
-                const mediaContent = item.getElementsByTagNameNS('http://search.yahoo.com/mrss/', 'content')[0];
-                if (mediaContent && mediaContent.getAttribute('url')) {
-                    thumbnail = mediaContent.getAttribute('url');
-                } else {
-                    const enclosure = item.querySelector('enclosure');
-                    if (enclosure && enclosure.getAttribute('url')) thumbnail = enclosure.getAttribute('url');
-                }
-                articles.push({
-                    title,
-                    url: link,
-                    score: 0,
-                    comments: 0,
-                    thumbnail: thumbnail || null,
-                    sourceName: source.name,
-                    sourceIcon: source.icon,
-                    categoryId: 'general', // on pourrait affiner, mais on laisse général
-                    date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
-                    rawTitle: title
-                });
-            });
-            return articles;
-        } catch (err) {
-            console.warn(`RSS ${source.name} ignoré :`, err.message);
-            return [];
-        }
-    }
-
-    // ==================== DÉDOUBLONNAGE ====================
-    function normalizeTitle(title) {
-        return title.toLowerCase().replace(/[^a-z0-9à-ü]/g, '').trim().substring(0, 60);
-    }
-
-    function mergeAndDeduplicate(articlesArrays) {
-        const seen = new Set();
-        const merged = [];
-        for (const arr of articlesArrays) {
-            for (const art of arr) {
-                const norm = normalizeTitle(art.title);
-                if (!seen.has(norm)) {
-                    seen.add(norm);
-                    merged.push(art);
-                }
-            }
-        }
-        // tri par date décroissante (récents d'abord), puis score
-        merged.sort((a, b) => {
-            const dateA = new Date(a.date).getTime() || 0;
-            const dateB = new Date(b.date).getTime() || 0;
-            if (dateB !== dateA) return dateB - dateA;
-            return (b.score || 0) - (a.score || 0);
-        });
-        return merged;
-    }
-
+    // --- Appel à l'API unique
     async function loadAllNews() {
-        newsGrid.innerHTML = '<div class="loading-state"><div class="spinner"></div>Interrogation de Reddit + flux RSS…</div>';
+        newsGrid.innerHTML = '<div class="loading-state"><div class="spinner"></div>Connexion à l’agrégateur…</div>';
         try {
-            // Reddit en parallèle (tous les subreddits uniques)
-            const uniqueSubs = [...new Set(REDDIT_SOURCES.map(s => s.sub))];
-            const redditPromises = uniqueSubs.map(sub => fetchReddit(sub));
-            const rssPromises = RSS_SOURCES.map(src => fetchRSS(src));
-
-            const [redditResults, rssResults] = await Promise.all([
-                Promise.all(redditPromises.map(p => p.catch(() => []))),
-                Promise.all(rssPromises)
-            ]);
-
-            const all = mergeAndDeduplicate([...redditResults.flat(), ...rssResults.flat()]);
-            allArticles = all;
+            const res = await fetch(`${API_BASE}/api/aggregate-news`);
+            if (!res.ok) throw new Error('Erreur API ' + res.status);
+            const data = await res.json();
+            allArticles = data.articles || [];
             lastUpdateSpan.textContent = new Date().toLocaleTimeString('fr-FR');
             applyFilter(activeFilter);
         } catch (err) {
-            newsGrid.innerHTML = `<div class="loading-state" style="color:#ff6b6b">⚠️ Erreur : ${err.message}</div>`;
+            newsGrid.innerHTML = `<div class="loading-state" style="color:#ff6b6b">⚠️ ${err.message}</div>`;
         }
     }
 
-    // ==================== AFFICHAGE ====================
+    // --- Affichage & filtres
     function applyFilter(filter) {
         let filtered = filter === 'all' ? allArticles : allArticles.filter(a => a.categoryId === filter);
         if (filtered.length === 0) {
@@ -331,7 +208,7 @@
         return div.innerHTML;
     }
 
-    // ==================== ONGLETS ====================
+    // --- Gestion des onglets
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             tabBtns.forEach(b => b.classList.remove('active'));
@@ -341,14 +218,12 @@
         });
     });
 
-    // ==================== DISCUSSION (localStorage) ====================
-    function getMessages() {
-        try { return JSON.parse(localStorage.getItem('gamehub_chat') || '[]'); } catch { return []; }
-    }
+    // --- Chat local
+    function getMessages() { try { return JSON.parse(localStorage.getItem('gamehub_chat') || '[]'); } catch { return []; } }
     function saveMessages(msgs) { localStorage.setItem('gamehub_chat', JSON.stringify(msgs)); }
     function renderChat() {
         const msgs = getMessages();
-        chatMessages.innerHTML = msgs.map((m, idx) => {
+        chatMessages.innerHTML = msgs.map(m => {
             const isOwn = usernameInput.value.trim() && m.author === usernameInput.value.trim();
             return `<div class="message ${isOwn ? 'own' : ''}">
                 <div class="author">${escapeHTML(m.author)}</div>
@@ -372,7 +247,7 @@
     sendBtn.addEventListener('click', sendMessage);
     messageInput.addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
 
-    // ==================== ROUTEUR ====================
+    // --- Routeur
     function route(path) {
         currentRoute = path;
         navLinks.forEach(link => link.classList.toggle('active', link.dataset.route === path));
@@ -397,10 +272,10 @@
     });
     window.addEventListener('popstate', () => route(location.pathname));
 
-    // Initialisation
+    // Init
     (function init() {
         const path = location.pathname;
-        // Vérifie une éventuelle redirection depuis 404.html (GitHub Pages)
+        // Redirection depuis 404.html (GitHub Pages)
         if (sessionStorage.redirect) {
             const redirected = sessionStorage.redirect;
             delete sessionStorage.redirect;
@@ -412,7 +287,7 @@
         }
     })();
 
-    // Rechargement automatique toutes les 15 minutes
+    // Rechargement toutes les 15 min
     setInterval(() => {
         if (currentRoute === '/' || currentRoute === '/index.html') loadAllNews();
     }, 15 * 60 * 1000);
